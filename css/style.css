@@ -1051,6 +1051,12 @@ img, svg {
   color: #ffffff;
 }
 
+.info-content p a:hover {
+  color: var(--color-accent);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
 .panel-footer-note {
   font-size: 0.85rem;
   color: #94a3b8;
@@ -1224,17 +1230,28 @@ textarea.form-control {
   transform: translateY(100px);
   opacity: 0;
   transition: all 0.35s cubic-bezier(0.16, 1, 0.3, 1);
+  pointer-events: none;
+}
+
+.toast.show,
+.toast-container.show .toast {
+  transform: translateY(0);
+  opacity: 1;
   pointer-events: auto;
 }
 
-.toast.show {
-  transform: translateY(0);
-  opacity: 1;
+.toast.error {
+  border-left-color: #ef4444;
 }
 
 .toast-icon {
   font-size: 1.3rem;
   color: var(--color-success);
+  flex-shrink: 0;
+}
+
+.toast.error .toast-icon {
+  color: #ef4444;
 }
 
 .toast-message h6 {

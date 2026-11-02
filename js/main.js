@@ -153,34 +153,64 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
-  // 6. 문의 폼 접수 및 토스트 알림
+  // 6. 문의 폼 접수 (FormSubmit 연동) 및 토스트 알림
   const inquiryForm = document.getElementById('inquiryForm');
   const toastNotification = document.getElementById('toastNotification');
+  let toastTimer = null;
 
-  const showToast = (title, message) => {
+  const TOAST_ICONS = {
+    success: `
+      <svg width="24" height="24" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24">
+        <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" />
+        <polyline points="22 4 12 14.01 9 11.01" />
+      </svg>`,
+    error: `
+      <svg width="24" height="24" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24">
+        <circle cx="12" cy="12" r="10" />
+        <line x1="12" y1="8" x2="12" y2="12" />
+        <line x1="12" y1="16" x2="12.01" y2="16" />
+      </svg>`
+  };
+
+  const showToast = (title, message, type = 'success') => {
     if (!toastNotification) return;
 
+    const toastElem = toastNotification.querySelector('.toast');
+    const iconElem = toastNotification.querySelector('.toast-icon');
     const titleElem = toastNotification.querySelector('.toast-message h6');
     const msgElem = toastNotification.querySelector('.toast-message p');
 
+    if (!toastElem) return;
+
+    toastElem.classList.toggle('error', type === 'error');
+    if (iconElem) iconElem.innerHTML = TOAST_ICONS[type] || TOAST_ICONS.success;
     if (titleElem) titleElem.textContent = title;
     if (msgElem) msgElem.textContent = message;
 
-    toastNotification.classList.add('show');
+    toastElem.classList.add('show');
 
-    setTimeout(() => {
-      toastNotification.classList.remove('show');
-    }, 4500);
+    if (toastTimer) clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => {
+      toastElem.classList.remove('show');
+    }, 5000);
   };
 
   if (inquiryForm) {
-    inquiryForm.addEventListener('submit', (e) => {
+    inquiryForm.addEventListener('submit', async (e) => {
       e.preventDefault();
 
+      const honeyInput = inquiryForm.querySelector('input[name="_honey"]');
+      if (honeyInput && honeyInput.value) {
+        return; // 스팸 봇 차단
+      }
+
+      const selectedService = inquiryForm.querySelector('input[name="service_type"]:checked');
+      const serviceType = selectedService ? selectedService.value : '일반 문의';
       const company = document.getElementById('companyName').value.trim();
       const contactName = document.getElementById('contactName').value.trim();
       const email = document.getElementById('contactEmail').value.trim();
       const phone = document.getElementById('contactPhone').value.trim();
+      const inquiryMessage = document.getElementById('inquiryMessage').value.trim();
       const privacyCheck = document.getElementById('privacyAgreement').checked;
 
       if (!privacyCheck) {
@@ -193,22 +223,81 @@ document.addEventListener('DOMContentLoaded', () => {
         return;
       }
 
-      // 폼 비활성화 시뮬레이션
-      const submitBtn = inquiryForm.querySelector('button[type="submit"]');
-      const originalText = submitBtn.innerHTML;
-      submitBtn.disabled = true;
-      submitBtn.innerHTML = '접수 중...';
+      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+      if (!emailRegex.test(email)) {
+        alert('올바른 이메일 주소 형식을 입력해 주세요.');
+        return;
+      }
 
-      setTimeout(() => {
-        submitBtn.disabled = false;
-        submitBtn.innerHTML = originalText;
-        inquiryForm.reset();
-
+      // FormSubmit은 보안상 로컬 파일(file://) 직접 열기 환경에서는 전송을 거부함
+      if (window.location.protocol === 'file:') {
         showToast(
-          '문의가 성공적으로 접수되었습니다!',
-          `${contactName}님, 남겨주신 정보로 담당 엔지니어가 24시간 이내에 연락드리겠습니다.`
+          '웹 서버 환경에서 테스트해 주세요.',
+          'FormSubmit 정책상 파일 직접 열기(file://)에서는 전송되지 않습니다. 로컬 서버(Live Server 등)나 배포된 도메인에서 이용해 주세요.',
+          'error'
         );
-      }, 700);
+        return;
+      }
+
+      const submitBtn = inquiryForm.querySelector('button[type="submit"]');
+      const originalBtnHtml = submitBtn.innerHTML;
+      submitBtn.disabled = true;
+      submitBtn.innerHTML = '문의 전송 중...';
+
+      try {
+        const response = await fetch('https://formsubmit.co/ajax/contact@kdsync.co.kr', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Accept': 'application/json'
+          },
+          body: JSON.stringify({
+            _subject: `[kdsync 홈페이지 문의] ${company} - ${contactName} (${serviceType})`,
+            _template: 'table',
+            _captcha: 'false',
+            _honey: honeyInput ? honeyInput.value : '',
+            service_type: serviceType,
+            company: company,
+            name: contactName,
+            email: email,
+            phone: phone,
+            message: inquiryMessage || '(내용 없음)'
+          })
+        });
+
+        const data = await response.json().catch(() => ({}));
+        const isSuccess = response.ok && (data.success === 'true' || data.success === true);
+
+        if (isSuccess) {
+          inquiryForm.reset();
+          showToast(
+            '문의가 성공적으로 접수되었습니다!',
+            `${contactName}님, 남겨주신 정보로 담당 엔지니어가 확인 후 연락드리겠습니다.`,
+            'success'
+          );
+        } else {
+          const serverMsg = typeof data.message === 'string' ? data.message : '';
+          const isActivationNeeded = serverMsg.toLowerCase().includes('activate') || serverMsg.toLowerCase().includes('activation');
+
+          showToast(
+            isActivationNeeded ? '이메일 수신 활성화가 필요합니다.' : '문의 전송에 실패했습니다.',
+            isActivationNeeded
+              ? 'contact@kdsync.co.kr 메일함으로 발송된 FormSubmit 활성화(Activate) 메일을 확인해 주세요.'
+              : '잠시 후 다시 시도하시거나 contact@kdsync.co.kr로 직접 메일 문의 부탁드립니다.',
+            'error'
+          );
+        }
+      } catch (error) {
+        console.error('Form submission error:', error);
+        showToast(
+          '네트워크 오류가 발생했습니다.',
+          '인터넷 연결을 확인하시거나 contact@kdsync.co.kr로 직접 메일 문의 부탁드립니다.',
+          'error'
+        );
+      } finally {
+        submitBtn.disabled = false;
+        submitBtn.innerHTML = originalBtnHtml;
+      }
     });
   }
 });
